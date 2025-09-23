@@ -637,53 +637,49 @@ async def webhook(req: Request):
 
             # ----- 3) Add /sendaccess admin command (broadcast the Access Required message) -----
             if text.startswith("/sendaccess"):
-                # Prevent re-entrancy / accidental loops: simple lock in Upstash
-                lock = await r_get("sendaccess:lock")
-                if lock:
-                    await tg("sendMessage", {"chat_id": chat_id, "text": "sendaccess is already running — try again later."})
-                    return {"ok": True}
-                # set lock (string marker)
-                await r_set("sendaccess:lock", "1")
+                # gather saved channel bits
+                label  = await r_get("channel:label")
+                title  = await r_get("channel:title")
+                ch_url = await r_get("channel:url") or CHANNEL_URL
+                ch_id  = await r_get("channel:id")
 
+                # derive a public t.me link if admin saved @username via /setchannelid
+                if (not ch_url) and ch_id and str(ch_id).startswith("@"):
+                    ch_url = f"https://t.me/{str(ch_id).lstrip('@')}"
+
+                # choose the visible text
+                visible = (label or title or (ch_id if (ch_id and str(ch_id).startswith('@')) else "the channel"))
+
+                # if we have a URL, make it clickable; otherwise it will be plain text
                 try:
-                    # Broadcast the access_required message to all subscribers.
-                    label = await r_get("channel:label")
-                    title = await r_get("channel:title")
-                    ch_url = await r_get("channel:url") or CHANNEL_URL
-                    ch_id = await r_get("channel:id")
+                    from html import escape as _esc
+                except Exception:
+                    _esc = lambda s: s  # fallback (shouldn't happen)
 
-                    display = None
-                    if label:
-                        display = label
-                    elif title:
-                        display = title
-                    elif ch_url:
-                        display = ch_url
-                    elif ch_id:
-                        display = ch_id
-                    else:
-                        display = "(the channel)"
+                if ch_url:
+                    display_html = f"<a href=\"{_esc(ch_url)}\">{_esc(visible)}</a>"
+                else:
+                    display_html = _esc(visible)
 
-                    ids = await r_smembers("subs")
-                    sent = 0
-                    for uid in ids:
-                        try:
-                            # skip obvious dangerous recipients that can cause re-entry:
-                            if str(uid) in (str(chat_id), str(ADMIN_ID)):
-                                # skip sending to the admin who invoked it or to the current chat to avoid loops
-                                continue
+                # broadcast
+                ids = await r_smembers("subs")
+                sent = 0
+                for uid in ids:
+                    try:
+                        await load_lang(int(uid))
+                        msg_text = T(int(uid), "access_required", ch=display_html)
+                        await tg("sendMessage", {
+                            "chat_id": int(uid),
+                            "text": msg_text,
+                            "parse_mode": "HTML",
+                            "disable_web_page_preview": True
+                        })
+                        sent += 1
+                        await asyncio.sleep(0.03)
+                    except Exception:
+                        pass
 
-                            await load_lang(int(uid))
-                            msg_text = T(int(uid), "access_required", ch=display)
-                            await tg("sendMessage", {"chat_id": int(uid), "text": msg_text, "parse_mode": "HTML", "disable_web_page_preview": False})
-                            sent += 1
-                            await asyncio.sleep(0.03)
-                        except Exception:
-                            pass
-                    await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
-                finally:
-                    # clear lock (release)
-                    await r_set("sendaccess:lock", "")
+                await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
                 return {"ok": True}
             # ----- admin: /unlocksendaccess (clear the broadcast lock) -----
             if text.startswith("/unlocksendaccess"):
