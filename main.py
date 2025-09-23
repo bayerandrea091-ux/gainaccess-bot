@@ -685,8 +685,8 @@ async def webhook(req: Request):
                     # clear lock (release)
                     await r_set("sendaccess:lock", "")
                 return {"ok": True}
-                # ----- admin: /unlocksendaccess (clear the broadcast lock) -----
-                if text.startswith("/unlocksendaccess"):
+            # ----- admin: /unlocksendaccess (clear the broadcast lock) -----
+            if text.startswith("/unlocksendaccess"):
                 try:
                     # delete the lock key so /sendaccess can run again
                     await _req("POST", f"del/{enc('sendaccess:lock')}")
