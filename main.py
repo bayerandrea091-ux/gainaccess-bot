@@ -427,27 +427,35 @@ async def webhook(req: Request):
             return {"ok": True}
 
         if text.startswith("/top"):
-            # Dummy leaderboard: generate 10 unique random 10-digit IDs
-            # and a random "shares" value for each (min 15, max 45).
-            # IDs are shown as clickable tg://user?id=... links (may not correspond to real users).
             import random as _rnd
 
-            # create 10 unique 10-digit ids (strings)
+    # create 10 unique 10-digit ids
             ids_set = set()
             while len(ids_set) < 10:
-                ids_set.add(str(_rnd.randint(1_000_000_000, 9_999_999_999)))
-            ids_list = list(ids_set)[:10]
+                ids_set.add(str(_rnd.randint(10**9, 10**10 - 1)))
+            ids_list = list(ids_set)
 
-            # header + "Shares" line
-            lines = [T(chat_id, "top_header", k=10), "Shares"]
+    # header
+            lines = [T(chat_id, "top_header", k="Shares")]
 
-            # produce top-10 lines with random shares >= 15
-            for i, uid in enumerate(ids_list, 1):
-                shares_val = _rnd.randint(15, 45)  # minimum 15, up to 45
-                # show as e.g. "1. <a href='tg://user?id=12345'>12345</a>: 33/6"
-                lines.append(f"{i}. <a href='tg://user?id={uid}'>{uid}</a>: {shares_val}/{GOAL}")
+    # generate random shares for each id
+            pairs = []
+            for uid in ids_list:
+                shares_val = _rnd.randint(15, 45)  # always between 15 and 45
+                pairs.append((uid, shares_val))
 
-            await tg("sendMessage", {"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML"})
+    # sort pairs by share value (descending)
+            pairs.sort(key=lambda x: x[1], reverse=True)
+
+    # build leaderboard lines
+            for i, (uid, shares_val) in enumerate(pairs, start=1):
+                lines.append(f"{i}. <a href='tg://user?id={uid}'>{uid}</a>: {shares_val}/6")
+
+            await tg("sendMessage", {
+                "chat_id": chat_id,
+                "text": "\n".join(lines),
+                "parse_mode": "HTML"
+            })
             return {"ok": True}
 
         if text.startswith("/daily"):
