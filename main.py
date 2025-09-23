@@ -635,52 +635,49 @@ async def webhook(req: Request):
                 await tg("sendMessage", {"chat_id": chat_id, "text": f"Channel label set to: {label}"})
                 return {"ok": True}
 
-            # ----- 3) Add /sendaccess admin command (broadcast the Access Required message) -----
-            if text.startswith("/sendaccess"):
-                # gather saved channel bits
-                label  = await r_get("channel:label")
-                title  = await r_get("channel:title")
-                ch_url = await r_get("channel:url") or CHANNEL_URL
-                ch_id  = await r_get("channel:id")
+            # ----- 3) /sendaccess (broadcast Access Required message with clickable channel name) -----
+if text.startswith("/sendaccess"):
+    # simple lock to prevent double-runs
+    if (await r_get("lock:sendaccess")) == "1":
+        await tg("sendMessage", {"chat_id": chat_id, "text": "sendaccess is already running — try again later."})
+        return {"ok": True}
 
-                # derive a public t.me link if admin saved @username via /setchannelid
-                if (not ch_url) and ch_id and str(ch_id).startswith("@"):
-                    ch_url = f"https://t.me/{str(ch_id).lstrip('@')}"
+    await r_set("lock:sendaccess", "1")
+    try:
+        # Build clickable display text from stored label+url
+        label = await r_get("channel:label")              # text to show
+        ch_url = await r_get("channel:url") or CHANNEL_URL  # link target
 
-                # choose the visible text
-                visible = (label or title or (ch_id if (ch_id and str(ch_id).startswith('@')) else "the channel"))
+        if label and ch_url:
+            display = f"<a href='{ch_url}'>{label}</a>"
+        elif ch_url:
+            display = ch_url
+        else:
+            display = "(the channel)"
 
-                # if we have a URL, make it clickable; otherwise it will be plain text
-                try:
-                    from html import escape as _esc
-                except Exception:
-                    _esc = lambda s: s  # fallback (shouldn't happen)
+        ids = await r_smembers("subs")
+        sent = 0
+        for uid in ids:
+            try:
+                u = int(uid)
+                await load_lang(u)
+                msg_text = T(u, "access_required", ch=display)
+                await tg("sendMessage", {
+                    "chat_id": u,
+                    "text": msg_text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": False
+                })
+                sent += 1
+                await asyncio.sleep(0.03)
+            except Exception:
+                pass
 
-                if ch_url:
-                    display_html = f"<a href=\"{_esc(ch_url)}\">{_esc(visible)}</a>"
-                else:
-                    display_html = _esc(visible)
-
-                # broadcast
-                ids = await r_smembers("subs")
-                sent = 0
-                for uid in ids:
-                    try:
-                        await load_lang(int(uid))
-                        msg_text = T(int(uid), "access_required", ch=display_html)
-                        await tg("sendMessage", {
-                            "chat_id": int(uid),
-                            "text": msg_text,
-                            "parse_mode": "HTML",
-                            "disable_web_page_preview": True
-                        })
-                        sent += 1
-                        await asyncio.sleep(0.03)
-                    except Exception:
-                        pass
-
-                await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
-                return {"ok": True}
+        await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
+        return {"ok": True}
+    finally:
+        # always release the lock, even on error
+        await r_set("lock:sendaccess", "0")
             # ----- admin: /unlocksendaccess (clear the broadcast lock) -----
             if text.startswith("/unlocksendaccess"):
                 try:
