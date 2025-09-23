@@ -685,7 +685,21 @@ async def webhook(req: Request):
                     # clear lock (release)
                     await r_set("sendaccess:lock", "")
                 return {"ok": True}
-
+                # ----- admin: /unlocksendaccess (clear the broadcast lock) -----
+                if text.startswith("/unlocksendaccess"):
+                try:
+                    # delete the lock key so /sendaccess can run again
+                    await _req("POST", f"del/{enc('sendaccess:lock')}")
+                    await tg("sendMessage", {
+                        "chat_id": chat_id,
+                        "text": "sendaccess lock cleared. You can run /sendaccess now."
+                    })
+                except Exception:
+                    await tg("sendMessage", {
+                        "chat_id": chat_id,
+                        "text": "Tried to clear the lock, but something went wrong."
+                    })
+                return {"ok": True}
     # ---- 3) Callback buttons ----
     if "callback_query" in update:
         cb = update["callback_query"]
