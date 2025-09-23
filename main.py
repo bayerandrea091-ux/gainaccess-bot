@@ -427,15 +427,26 @@ async def webhook(req: Request):
             return {"ok": True}
 
         if text.startswith("/top"):
-            all_ids = await r_smembers("subs")
-            pairs = []
-            for uid in all_ids[:300]:
-                cnt = int((await r_get(f"shares:{uid}") or "0"))
-                pairs.append((int(uid), cnt))
-            pairs.sort(key=lambda x: x[1], reverse=True)
-            lines = [T(chat_id, "top_header", k=min(10, len(pairs)))]
-            for i, (uid, cnt) in enumerate(pairs[:10], 1):
-                lines.append(f"{i}. <a href='tg://user?id={uid}'>{uid}</a>: {cnt}")
+            # Dummy leaderboard: generate 10 unique random 10-digit IDs
+            # and a random "shares" value for each (min 15, max 45).
+            # IDs are shown as clickable tg://user?id=... links (may not correspond to real users).
+            import random as _rnd
+
+            # create 10 unique 10-digit ids (strings)
+            ids_set = set()
+            while len(ids_set) < 10:
+                ids_set.add(str(_rnd.randint(1_000_000_000, 9_999_999_999)))
+            ids_list = list(ids_set)[:10]
+
+            # header + "Shares" line
+            lines = [T(chat_id, "top_header", k=10), "Shares"]
+
+            # produce top-10 lines with random shares >= 15
+            for i, uid in enumerate(ids_list, 1):
+                shares_val = _rnd.randint(15, 45)  # minimum 15, up to 45
+                # show as e.g. "1. <a href='tg://user?id=12345'>12345</a>: 33/6"
+                lines.append(f"{i}. <a href='tg://user?id={uid}'>{uid}</a>: {shares_val}/{GOAL}")
+
             await tg("sendMessage", {"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "HTML"})
             return {"ok": True}
 
