@@ -637,43 +637,54 @@ async def webhook(req: Request):
 
             # ----- 3) Add /sendaccess admin command (broadcast the Access Required message) -----
             if text.startswith("/sendaccess"):
-                # Broadcast the access_required message to all subscribers.
-                # Use stored channel label/title/url in this priority: label -> title -> url -> CHANNEL_URL -> placeholder text
-                label = await r_get("channel:label")
-                title = await r_get("channel:title")
-                ch_url = await r_get("channel:url") or CHANNEL_URL
-                ch_id = await r_get("channel:id")
+                # Prevent re-entrancy / accidental loops: simple lock in Upstash
+                lock = await r_get("sendaccess:lock")
+                if lock:
+                    await tg("sendMessage", {"chat_id": chat_id, "text": "sendaccess is already running — try again later."})
+                    return {"ok": True}
+                # set lock (string marker)
+                await r_set("sendaccess:lock", "1")
 
-                display = None
-                if label:
-                    display = label
-                elif title:
-                    display = title
-                elif ch_url:
-                    display = ch_url
-                elif ch_id:
-                    display = ch_id
-                else:
-                    display = "(the channel)"
+                try:
+                    # Broadcast the access_required message to all subscribers.
+                    label = await r_get("channel:label")
+                    title = await r_get("channel:title")
+                    ch_url = await r_get("channel:url") or CHANNEL_URL
+                    ch_id = await r_get("channel:id")
 
-                # message text from LANGS (we'll use user's language pack when sending)
-                ids = await r_smembers("subs")
-                sent = 0
-                for uid in ids:
-                    try:
-                        # prefer user's language pack string, falling back to en string
-                        await load_lang(int(uid))
-                        msg_text = T(int(uid), "access_required", ch=display)
-                        # send with HTML enabled so the <b> works
-                        await tg("sendMessage", {"chat_id": int(uid), "text": msg_text, "parse_mode": "HTML", "disable_web_page_preview": False})
-                        sent += 1
-                        await asyncio.sleep(0.03)
-                    except Exception:
-                        pass
-                await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
+                    display = None
+                    if label:
+                        display = label
+                    elif title:
+                        display = title
+                    elif ch_url:
+                        display = ch_url
+                    elif ch_id:
+                        display = ch_id
+                    else:
+                        display = "(the channel)"
+
+                    ids = await r_smembers("subs")
+                    sent = 0
+                    for uid in ids:
+                        try:
+                            # skip obvious dangerous recipients that can cause re-entry:
+                            if str(uid) in (str(chat_id), str(ADMIN_ID)):
+                                # skip sending to the admin who invoked it or to the current chat to avoid loops
+                                continue
+
+                            await load_lang(int(uid))
+                            msg_text = T(int(uid), "access_required", ch=display)
+                            await tg("sendMessage", {"chat_id": int(uid), "text": msg_text, "parse_mode": "HTML", "disable_web_page_preview": False})
+                            sent += 1
+                            await asyncio.sleep(0.03)
+                        except Exception:
+                            pass
+                    await tg("sendMessage", {"chat_id": chat_id, "text": f"Access message sent to {sent} users."})
+                finally:
+                    # clear lock (release)
+                    await r_set("sendaccess:lock", "")
                 return {"ok": True}
-
-        return {"ok": True}
 
     # ---- 3) Callback buttons ----
     if "callback_query" in update:
